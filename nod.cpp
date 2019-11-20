@@ -46,11 +46,6 @@
 using pb_f = std::function<std::string(const std::string&)>;
 
 const static std::unordered_map<std::string, pb_f> probeTable = {
-    {"perNFDGS"s, periodicProbe},
-    {"NFDStrategy"s, nfdStrategyProbe},
-    {"NFDRIB"s, nfdRIBProbe},
-    {"NFDGeneralStatus"s, nfdGSProbe},
-    {"NFDFaceStatus"s, nfdFSProbe},
     {"Pinger"s, echoProbe}
 };
 
