@@ -55,3 +55,7 @@ Thumbs.db
 
 # Python byte code
 *.pyc
+
+# Protobuf output
+*.pb.cc
+*.pb.h
