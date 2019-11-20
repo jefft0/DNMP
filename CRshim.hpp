@@ -47,14 +47,14 @@ using namespace ndn;
 struct RName : public Name {
     using Name::Name;
 
-    const name::Component& operator[](std::string_view s) const
+    const ndn::Name::Component& operator[](std::string_view s) const
     {
-        return at(m_n2i.at(s));
+        return get(m_n2i.at(s));
     }
     std::string str(std::string_view s) const
     {
-        auto c = at(m_n2i.at(s));
-        return std::string((const char*)c.value(), c.value_size());
+        auto c = get(m_n2i.at(s));
+        return std::string((const char*)c.getValue().buf(), c.getValue().size());
     }
   private:
     // XXX temporary placeholder component name to index map. Will be
@@ -80,7 +80,7 @@ struct Reply : public Publication {
     const RName& name() const { return (const RName&)(Publication::getName()); }
 
     template <typename T>
-    const name::Component& operator[](T t) const { return name()[t]; }
+    const ndn::Name::Component& operator[](T t) const { return name()[t]; }
 
     /*
      * return the time difference (in seconds) between timepoint 'tp'
@@ -91,7 +91,7 @@ struct Reply : public Publication {
                                 time::system_clock::now()) const
     {
         return boost::chrono::duration_cast<boost::chrono::duration<double>>
-                (tp - name()[t].toTimestamp()).count();
+                (tp - toTimestamp(name()[t])).count();
     }
 
     /*
@@ -102,7 +102,7 @@ struct Reply : public Publication {
     double timeDelta(T l, T f) const
     {
         return boost::chrono::duration_cast<boost::chrono::duration<double>>
-                (name()[l].toTimestamp() - name()[f].toTimestamp()).count();
+                (toTimestamp(name()[l]) - toTimestamp(name()[f])).count();
     }
 };
 
@@ -118,16 +118,22 @@ using TimerCb = std::function<void()>;
 class CRshim
 {
   public:
-    CRshim(Face& face, const std::string& target) :
+    CRshim(ThreadsafeFace& face, const std::string& target) :
         m_face(face), m_sync(m_face, targetToPrefix(target), isExpired, filterPubs),
         m_topic{topicName(target)}
     {}
     CRshim(const std::string& target) :
-        CRshim(*new Face(), target) {}
+        CRshim(*makeFace(), target) {}
     CRshim(const CRshim& s1, const std::string& target) :
         CRshim(s1.m_face, target) {}
 
-    void run() { m_face.processEvents(); }
+    void run()
+    {
+        if (!m_work)
+            // mwork keeps the ioService running.
+            m_work = std::make_shared<boost::asio::io_service::work>(m_face.getIoService());
+        m_face.getIoService().run();
+    }
     auto prefix() const { return m_topic; }
 
     /* command/reply client methods */
@@ -141,7 +147,8 @@ class CRshim
     {
         Name cmd(prefix());
         cmd.append(Name::Component(s)).append(Name::Component(a))
-           .append(myPID()).appendTimestamp();
+           .append(myPID());
+        appendTimestamp(cmd);
         return Publication(cmd);
     }
 
@@ -179,7 +186,8 @@ class CRshim
     void sendReply(Name& n, std::string&& rv)
     {
         // append nod id & timestamp to reply name then publish reply
-        n.append(Name::Component(myPID())).appendTimestamp();
+        n.append(Name::Component(myPID()));
+        appendTimestamp(n);
         Publication r(n);
         m_sync.publish(std::move(r.setContent((const uint8_t*)(rv.data()), rv.size())));
     }
@@ -190,8 +198,8 @@ class CRshim
      */
     template <typename ... T>
     static auto shims(T...target) {
-        Face& f = *new Face();
-        return std::array<CRshim,sizeof...(T)> {CRshim(f, target)...};
+        ThreadsafeFace& f = *makeFace();
+        return std::array<std::shared_ptr<CRshim>,sizeof...(T)> {std::make_shared<CRshim>(f, target)...};
     }
 
     /* Common methods */
@@ -217,7 +225,6 @@ class CRshim
     Timer schedule(ndn::time::nanoseconds d, const TimerCb& cb) {
         return m_sync.schedule(d, cb);
     }
-
   protected:
     static inline const FilterPubsCb filterPubs =
         [](auto& pOurs, auto& pOthers) mutable {
@@ -228,8 +235,8 @@ class CRshim
                 return pOurs;
             }
             const auto cmp = [](const auto p1, const auto p2) {
-                return p1->getName()[-1].toTimestamp() >
-                       p2->getName()[-1].toTimestamp();
+                return toTimestamp(p1->getName()[-1]) >
+                       toTimestamp(p2->getName()[-1]);
             };
             if (pOurs.size() > 1) {
                 std::sort(pOurs.begin(), pOurs.end(), cmp);
@@ -241,7 +248,7 @@ class CRshim
             return pOurs;
         };
     static inline const IsExpiredCb isExpired = [](auto p) {
-        auto dt = ndn::time::system_clock::now() - p.getName()[-1].toTimestamp();
+        auto dt = ndn::time::system_clock::now() - toTimestamp(p.getName()[-1]);
         return dt >= maxPubLifetime+maxClockSkew || dt <= -maxClockSkew;
     };
     // -- temporary pre-schemaLib place holders --
@@ -291,7 +298,18 @@ class CRshim
     }
     // -- end of place holders --
   private:
-    Face& m_face;
+    static ThreadsafeFace*
+    makeFace()
+    {
+      ThreadsafeFace* face = new ThreadsafeFace();
+      // Use the system default key chain and certificate name to sign commands.
+      KeyChain* keyChain = new KeyChain();
+      face->setCommandSigningInfo(*keyChain, keyChain->getDefaultCertificateName());
+      return face;
+    }
+
+    ThreadsafeFace& m_face;
+    std::shared_ptr<boost::asio::io_service::work> m_work;
     SyncPubsub m_sync;
     Name m_topic;     // full name of the topic
 };

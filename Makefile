@@ -1,36 +1,42 @@
 # on a mac need to set PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
 # the code *requires* C++ 17 or later
 CXXFLAGS = -g -O2 -I. -Wall -std=c++17
-CXXFLAGS += $(shell pkg-config --cflags libndn-cxx)
-LIBS = $(shell pkg-config --libs libndn-cxx)
+CXXFLAGS += $(shell pkg-config --cflags libndn-ind)
+PROTOC=protoc
+LIBS = $(shell pkg-config --libs libndn-ind)
 HDRS = CRshim.hpp syncps/syncps.hpp syncps/iblt.hpp
-DEPS = $(HDRS)
+OBJS = syncps/syncps-content.pb.o
+DEPS = $(HDRS) $(OBJS)
 BINS = genericCLI nod bhClient
 JUNK = 
 
 # OS dependent definitions
 ifeq ($(shell uname -s),Darwin)
-LIBS += -lboost_iostreams-mt
+LIBS += -lboost_iostreams-mt -lboost_chrono-mt -lprotobuf -llog4cxx
 JUNK += $(addsuffix .dSYM,$(BINS))
 else
-LIBS += -lboost_iostreams
+LIBS += -lboost_iostreams -lboost_chrono -lprotobuf -llog4cxx -lpthread
 endif
 
 all: $(BINS)
 
 .PHONY: clean distclean tags
+.PRECIOUS: %.pb.cc
 
 genericCLI: generic-client.cpp $(DEPS)
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBS)
+	$(CXX) $(CXXFLAGS) -o $@ $< $(OBJS) $(LIBS)
 
 bhClient: bh-client.cpp $(DEPS)
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBS)
+	$(CXX) $(CXXFLAGS) -o $@ $< $(OBJS) $(LIBS)
 
 nod: nod.cpp probes.hpp $(DEPS)
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBS)
+	$(CXX) $(CXXFLAGS) -o $@ $< $(OBJS) $(LIBS)
+
+%.pb.cc: %.proto
+	$(PROTOC) --proto_path=$(dir $<) --cpp_out=$(dir $<) $<
 
 clean:
-	rm -f $(BINS)
+	rm -f $(BINS) $(OBJS) syncps/syncps-content.pb.*
 
 distclean: clean
 	rm -rf $(JUNK)

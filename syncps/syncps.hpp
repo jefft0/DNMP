@@ -27,23 +27,27 @@
 #include <random>
 #include <unordered_map>
 
-#include <ndn-cxx/face.hpp>
-#include <ndn-cxx/security/key-chain.hpp>
-#include <ndn-cxx/security/validator-null.hpp>
-#include <ndn-cxx/util/logger.hpp>
-#include <ndn-cxx/util/random.hpp>
-#include <ndn-cxx/util/scheduler.hpp>
-#include <ndn-cxx/util/time.hpp>
+#include <ndn-ind/threadsafe-face.hpp>
+#include <ndn-ind/security/key-chain.hpp>
+#include <ndn-ind/security/validator-null.hpp>
+#include <ndn-ind/util/logging.hpp>
+#include <ndn-ind/lite/util/crypto-lite.hpp>
+#include <ndn-ind/util/scheduler.hpp>
+#include <ndn-ind/util/time.hpp>
+#include <ndn-ind/encoding/protobuf-tlv.hpp>
 
 #include "syncps/iblt.hpp"
+// This include is produced in the Makefile by:
+// protoc --cpp_out=. syncps-content.proto
+#include "syncps-content.pb.h"
 
 namespace syncps
 {
-NDN_LOG_INIT(syncps.SyncPubsub);
+INIT_LOGGER("syncps.SyncPubsub");
 
 using Name = ndn::Name;         // type of a name
 using Publication = ndn::Data;  // type of a publication
-using SigningInfo = ndn::security::SigningInfo; // how to sign publication
+using SigningInfo = ndn::SigningInfo; // how to sign publication
 using ScopedEventId = ndn::scheduler::ScopedEventId; // scheduler events
 
 namespace tlv
@@ -108,25 +112,24 @@ class SyncPubsub
      * @param syncInterestLifetime lifetime of the sync interest
      * @param expectedNumEntries expected entries in IBF
      */
-    SyncPubsub(ndn::Face& face, Name syncPrefix,
+    SyncPubsub(ndn::ThreadsafeFace& face, Name syncPrefix,
         IsExpiredCb isExpired, FilterPubsCb filterPubs,
         ndn::time::milliseconds syncInterestLifetime = 4_s,
         size_t expectedNumEntries = 85)  // = 128/1.5 (see detail/iblt.hpp)
         : m_face(face),
           m_syncPrefix(std::move(syncPrefix)),
           m_expectedNumEntries(expectedNumEntries),
-          m_validator(ndn::security::v2::getAcceptAllValidator()), //XXX
+          m_validator(m_validatorNull), //XXX
           m_scheduler(m_face.getIoService()),
           m_iblt(expectedNumEntries),
-          m_signingInfo(ndn::security::SigningInfo::SIGNER_TYPE_SHA256),
+          m_signingInfo(ndn::SigningInfo(ndn::SigningInfo::SIGNER_TYPE_SHA256)),
           m_isExpired{std::move(isExpired)}, m_filterPubs{std::move(filterPubs)},
           m_syncInterestLifetime(syncInterestLifetime),
-          m_registeredPrefix(m_face.setInterestFilter(
-              ndn::InterestFilter(m_syncPrefix).allowLoopback(false),
-              [this](auto f, auto i) { onSyncInterest(f, i); },
-              [this](auto/*n*/) { m_registering = false; sendSyncInterest(); },
-              [this](auto n, auto s) { onRegisterFailed(n, s); },
-              m_signingInfo))
+          m_registeredPrefix(m_face.registerPrefix(
+              m_syncPrefix,
+              [this](auto& prefix, auto& i, auto& face, auto id, auto& filter) { onSyncInterest(*prefix, *i); },
+              [this](auto& n) { onRegisterFailed(*n); },
+              [this](auto&/*n*/, auto/*id*/) { m_registering = false; sendSyncInterest(); }))
     { }
 
     /**
@@ -141,9 +144,9 @@ class SyncPubsub
     {
         m_keyChain.sign(pub, m_signingInfo); //XXX
         if (isKnown(pub)) {
-            NDN_LOG_WARN("republish of '" << pub.getName() << "' ignored");
+            _LOG_WARN("republish of '" << pub.getName() << "' ignored");
         } else {
-            NDN_LOG_INFO("Publish: " << pub.getName());
+            _LOG_INFO("Publish: " << pub.getName());
             ++m_publications;
             addToActive(std::move(pub), true);
             // new pub may let us respond to pending interest(s).
@@ -168,7 +171,7 @@ class SyncPubsub
         // add to subscription dispatch table. NOTE that an existing
         // subscription to 'topic' will be changed to the new callback.
         m_subscription[topic] = std::move(cb);
-        NDN_LOG_INFO("subscribeTo: " << topic);
+        _LOG_INFO("subscribeTo: " << topic);
         return *this;
     }
 
@@ -182,7 +185,7 @@ class SyncPubsub
     SyncPubsub& unsubscribe(const Name& topic)
     {
         m_subscription.erase(topic);
-        NDN_LOG_INFO("unsubscribe: " << topic);
+        _LOG_INFO("unsubscribe: " << topic);
         return *this;
     }
 
@@ -244,7 +247,7 @@ class SyncPubsub
     }
      */
 
-    const ndn::security::v2::Validator& getValidator() { return m_validator; }
+    const ndn::Validator& getValidator() { return m_validator; }
 
    private:
 
@@ -284,21 +287,23 @@ class SyncPubsub
         m_iblt.appendToName(name);
 
         ndn::Interest syncInterest(name);
-        m_currentInterest = ndn::random::generateWord32();
+        uint8_t nonceBytes[4];
+        ndn::CryptoLite::generateRandomBytes(nonceBytes, 4);
+        m_currentInterest = ndn::Blob(nonceBytes, 4);
         syncInterest.setNonce(m_currentInterest)
             .setCanBePrefix(true)
             .setMustBeFresh(true)
-            .setInterestLifetime(m_syncInterestLifetime);
+            .setInterestLifetimeMilliseconds(m_syncInterestLifetime.count());
         m_face.expressInterest(syncInterest,
-                [this](auto i, auto d) {
-                    m_validator.validate(d,
-                        [this, i](auto d) { onValidData(i, d); },
-                        [](auto d, auto e) { NDN_LOG_INFO("Invalid: " << e << " Data " << d); }); },
-                [](auto i, auto/*n*/) { NDN_LOG_INFO("Nack for " << i); },
-                [](auto i) { NDN_LOG_INFO("Timeout for " << i); });
+                [this](auto& i, auto& d) {
+                    m_validator.validate(*d,
+                        [this, i](auto& d) { onValidData(*i, d); },
+                        [](auto& d, auto& e) { _LOG_INFO("Invalid: " << e << " Data " << d); }); },
+                [](auto& i) { _LOG_INFO("Timeout for " << i->toUri()); },
+                [](auto& i, auto&/*n*/) { _LOG_INFO("Nack for " << i->toUri()); });
         ++m_interestsSent;
-        NDN_LOG_DEBUG("sendSyncInterest " << std::hex
-                      << m_currentInterest << "/" << hashIBLT(name));
+        _LOG_DEBUG("sendSyncInterest " << std::hex
+                      << m_currentInterest.toHex() << "/" << hashIBLT(name));
     }
 
     /**
@@ -306,7 +311,7 @@ class SyncPubsub
      */
     void sendSyncInterestSoon()
     {
-        NDN_LOG_DEBUG("sendSyncInterestSoon");
+        _LOG_DEBUG("sendSyncInterestSoon");
         m_scheduledSyncInterestId =
             m_scheduler.schedule(3_ms, [this]{ sendSyncInterest(); });
     }
@@ -323,16 +328,16 @@ class SyncPubsub
      */
     void onSyncInterest(const ndn::Name& prefixName, const ndn::Interest& interest)
     {
-        if (interest.getNonce() == m_currentInterest) {
+        if (interest.getNonce().equals(m_currentInterest)) {
             // library looped back our interest
             return;
         }
         const ndn::Name& name = interest.getName();
-        NDN_LOG_DEBUG("onSyncInterest " << std::hex << interest.getNonce() << "/"
+        _LOG_DEBUG("onSyncInterest " << interest.getNonce().toHex() << "/"
                       << hashIBLT(name));
 
         if (name.size() - prefixName.size() != 1) {
-            NDN_LOG_INFO("invalid sync interest: " << interest);
+            _LOG_INFO("invalid sync interest: " << interest.toUri());
             return;
         }
         if (!  handleInterest(name)) {
@@ -345,7 +350,7 @@ class SyncPubsub
 
     void handleInterests()
     {
-        NDN_LOG_DEBUG("handleInterests");
+        _LOG_DEBUG("handleInterests");
         auto now = ndn::time::system_clock::now();
         for (auto i = m_interests.begin(); i != m_interests.end(); ) {
             const auto& [name, expires] = *i;
@@ -367,13 +372,13 @@ class SyncPubsub
         try {
             iblt.initialize(name.get(-1));
         } catch (const std::exception& e) {
-            NDN_LOG_WARN(e.what());
+            _LOG_WARN(e.what());
             return true;
         }
         std::set<uint32_t> have;
         std::set<uint32_t> need;
         (m_iblt - iblt).listEntries(have, need);
-        NDN_LOG_DEBUG("handleInterest " << std::hex << hashIBLT(name)
+        _LOG_DEBUG("handleInterest " << std::hex << hashIBLT(name)
                       << " need " << need.size() << ", have " << have.size());
 
         // If we have things the other side doesn't, send as many as
@@ -395,16 +400,18 @@ class SyncPubsub
         if (pOurs.empty()) {
             return false;
         }
-        ndn::Block pubs(tlv::syncpsContent);
+        syncps_message::SyncpsContentMessage pubs;
+        size_t pubsSize = 0;
         for (const auto& p : pOurs) {
-            NDN_LOG_DEBUG("Send pub " << p->getName());
-            pubs.push_back((*(p)).wireEncode());
-            if (pubs.size() >= maxPubSize) {
+            _LOG_DEBUG("Send pub " << p->getName());
+            auto encoding = (*(p)).wireEncode();
+            pubsSize += encoding.size();
+            ndn::ProtobufTlv::addTlv(*pubs.mutable_syncps_content(), encoding);
+            if (pubsSize >= maxPubSize) {
                 break;
             }
         }
-        pubs.encode();
-        sendSyncData(name, pubs);
+        sendSyncData(name, ndn::ProtobufTlv::encode(pubs));
         return true;
     }
 
@@ -418,13 +425,14 @@ class SyncPubsub
      *              (data packet's base name)
      * @param pubs  is the list of publications (data packet's payload)
      */
-    void sendSyncData(const ndn::Name& name, const ndn::Block& pubs)
+    void sendSyncData(const ndn::Name& name, const ndn::Blob& pubs)
     {
-        NDN_LOG_DEBUG("sendSyncData: " << name);
+        _LOG_DEBUG("sendSyncData: " << name);
         auto data = std::make_shared<ndn::Data>();
-        data->setName(name).setContent(pubs).setFreshnessPeriod(maxPubLifetime / 2);
+        data->setName(name).setContent(pubs);
+        data->getMetaInfo().setFreshnessPeriod((maxPubLifetime / 2).count());
         m_keyChain.sign(*data, m_signingInfo);
-        m_face.put(*data);
+        m_face.putData(*data);
     }
 
     /**
@@ -439,14 +447,16 @@ class SyncPubsub
      */
     void onValidData(const ndn::Interest& interest, const ndn::Data& data)
     {
-        NDN_LOG_DEBUG("onValidData: " << std::hex << interest.getNonce() << "/"
+        _LOG_DEBUG("onValidData: " << interest.getNonce().toHex() << "/"
                        << hashIBLT(interest.getName())
                        << " " << data.getName());
 
-        const ndn::Block& pubs(data.getContent().blockFromValue());
-        if (pubs.type() != tlv::syncpsContent) {
-            NDN_LOG_WARN("Sync Data with wrong content type " <<
-                         pubs.type() << " ignored.");
+        syncps_message::SyncpsContentMessage pubs;
+        try {
+            ndn::ProtobufTlv::decode(pubs, data.getContent());
+        } catch (std::runtime_error& ex) {
+            _LOG_WARN("Ignoring sync Data with wrong content type or other error: " <<
+                         ex.what());
             return;
         }
 
@@ -455,17 +465,20 @@ class SyncPubsub
         m_delivering = true;
         auto initpubs = m_publications;
 
-        pubs.parse();
-        for (const auto& e : pubs.elements()) {
-            if (e.type() != ndn::tlv::Data) {
-                NDN_LOG_WARN("Sync Data with wrong Publication type " <<
-                             e.type() << " ignored.");
-                continue;
+        for (auto i = 0; i < pubs.syncps_content().publications_size(); ++i) {
+            ndn::Blob e;
+            try {
+                e = ndn::ProtobufTlv::getTlv(pubs.syncps_content(), "publications", i);
+            } catch (std::runtime_error& ex) {
+                _LOG_WARN("Ignoring sync Data with wrong Publication type or other error: " <<
+                          ex.what());
+                return;
             }
             //XXX validate pub against schema here
-            Publication pub(e);
+            Publication pub;
+            pub.wireDecode(e);
             if (m_isExpired(pub) || isKnown(pub)) {
-                NDN_LOG_DEBUG("ignore expired or known " << pub.getName());
+                _LOG_DEBUG("ignore expired or known " << pub.getName());
                 continue;
             }
             // we don't already have this publication so deliver it
@@ -481,10 +494,10 @@ class SyncPubsub
             auto sub = m_subscription.lower_bound(nm);
             if ((sub != m_subscription.end() && sub->first.isPrefixOf(nm)) ||
                 (sub != m_subscription.begin() && (--sub)->first.isPrefixOf(nm))) {
-                NDN_LOG_DEBUG("deliver " << nm << " to " << sub->first);
+                _LOG_DEBUG("deliver " << nm << " to " << sub->first);
                 sub->second(*p);
             } else {
-                NDN_LOG_DEBUG("no sub for  " << nm);
+                _LOG_DEBUG("no sub for  " << nm);
             }
         }
 
@@ -494,7 +507,7 @@ class SyncPubsub
         // If deliveries resulted in new publications, try to satisfy
         // pending peer interests.
         m_delivering = false;
-        if (interest.getNonce() == m_currentInterest) {
+        if (interest.getNonce().equals(m_currentInterest)) {
             sendSyncInterest();
         }
         if (initpubs != m_publications) {
@@ -513,7 +526,7 @@ class SyncPubsub
     {
         const auto& b = pub.wireEncode();
         return murmurHash3(N_HASHCHECK,
-                           std::vector<uint8_t>(b.wire(), b.wire() + b.size()));
+                           std::vector<uint8_t>(b.buf(), b.buf() + b.size()));
     }
 
     bool isKnown(uint32_t h) const
@@ -531,7 +544,7 @@ class SyncPubsub
 
     std::shared_ptr<Publication> addToActive(Publication&& pub, bool localPub = false)
     {
-        NDN_LOG_DEBUG("addToActive: " << pub.getName());
+        _LOG_DEBUG("addToActive: " << pub.getName());
         auto hash = hashPub(pub);
         auto p = std::make_shared<Publication>(pub);
         m_active[p] = localPub? 3 : 1;
@@ -558,7 +571,7 @@ class SyncPubsub
 
     void removeFromActive(const PubPtr& p)
     {
-        NDN_LOG_DEBUG("removeFromActive: " << (*p).getName());
+        _LOG_DEBUG("removeFromActive: " << (*p).getName());
         m_active.erase(p);
         m_hash2pub.erase(hashPub(*p));
     }
@@ -567,26 +580,26 @@ class SyncPubsub
      * @brief Log a message if setting an interest filter fails
      *
      * @param prefix
-     * @param msg
      */
-    void onRegisterFailed(const ndn::Name& prefix, const std::string& msg) const
+    void onRegisterFailed(const ndn::Name& prefix) const
     {
-        NDN_LOG_ERROR("onRegisterFailed " << prefix << " " << msg);
-        BOOST_THROW_EXCEPTION(Error(msg));
+        _LOG_ERROR("onRegisterFailed " << prefix);
+        BOOST_THROW_EXCEPTION(Error("onRegisterFailed " + prefix.toUri()));
     }
 
     uint32_t hashIBLT(const Name& n) const
     {
-        const auto& b = n[-1].wireEncode();
+        const auto& b = n[-1].getValue();
         return murmurHash3(N_HASHCHECK,
-                           std::vector<uint8_t>(b.wire(), b.wire() + b.size()));
+                           std::vector<uint8_t>(b.buf(), b.buf() + b.size()));
     }
 
   private:
-    ndn::Face& m_face;
+    ndn::ThreadsafeFace& m_face;
     ndn::Name m_syncPrefix;
     uint32_t m_expectedNumEntries;
-    ndn::security::v2::Validator& m_validator;
+    ndn::ValidatorNull m_validatorNull;
+    ndn::Validator& m_validator;
     ndn::Scheduler m_scheduler;
     std::map<const Name, ndn::time::system_clock::TimePoint> m_interests{};
     IBLT m_iblt;
@@ -601,13 +614,33 @@ class SyncPubsub
     ndn::time::milliseconds m_syncInterestLifetime;
     ndn::scheduler::ScopedEventId m_scheduledSyncInterestId;
     //ndn::ScopedPendingInterestHandle m_interest;
-    ndn::ScopedRegisteredPrefixHandle m_registeredPrefix;
-    uint32_t m_currentInterest{};   // nonce of current sync interest
+    uint64_t m_registeredPrefix;
+    ndn::Blob m_currentInterest;   // nonce of current sync interest
     uint32_t m_publications{};      // # local publications
     uint32_t m_interestsSent{};
     bool m_delivering{false};       // currently processing a Data
     bool m_registering{true};
 };
+
+/**
+ * Convert component.toTimestamp() to a TimePoint.
+ */
+static inline ndn::time::system_clock::TimePoint
+toTimestamp(const ndn::Name::Component& component)
+{
+  return ndn::time::getUnixEpoch() + ndn::time::microseconds(component.toTimestamp());
+}
+
+/**
+ * Append a component for the current time stamp to the name.
+ */
+static inline Name&
+appendTimestamp(Name& name)
+{
+  return name.appendTimestamp
+    (ndn::time::duration_cast<ndn::time::microseconds>
+     (ndn::time::system_clock::now() - ndn::time::getUnixEpoch()).count());
+}
 
 }  // namespace syncps
 

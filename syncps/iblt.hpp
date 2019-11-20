@@ -60,7 +60,7 @@
 #include <boost/iostreams/device/array.hpp>
 #include <boost/iostreams/filter/zlib.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
-#include <ndn-cxx/name.hpp>
+#include <ndn-ind/name.hpp>
 
 namespace syncps {
 
@@ -106,10 +106,10 @@ static inline uint32_t murmurHash3(uint32_t nHashSeed,
     switch (vDataToHash.size() & 3) {
     case 3:
         k1 ^= tail[2] << 16;
-        NDN_CXX_FALLTHROUGH;
+        ((void)0); // FALLTHROUGH
     case 2:
         k1 ^= tail[1] << 8;
-        NDN_CXX_FALLTHROUGH;
+        ((void)0); // FALLTHROUGH
     case 1:
         k1 ^= tail[0];
         k1 *= c1;
@@ -201,7 +201,7 @@ class IBLT
      * @param ibltName the Component representation of IBLT
      * @throws Error if size of values is not compatible with this IBF
      */
-    void initialize(const ndn::name::Component& ibltName)
+    void initialize(const ndn::Name::Component& ibltName)
     {
         const auto& values = extractValueFromName(ibltName);
 
@@ -333,7 +333,7 @@ class IBLT
         bio::copy(in, sstream);
 
         std::string compressedIBF = sstream.str();
-        name.append(compressedIBF.begin(), compressedIBF.end());
+        name.append((const uint8_t *)compressedIBF.data(), compressedIBF.size());
     }
 
     /**
@@ -346,9 +346,11 @@ class IBLT
      * @return a uint32_t vector representing the hash table of the IBLT
      */
     std::vector<uint32_t> extractValueFromName(
-        const ndn::name::Component& ibltName) const
+        const ndn::Name::Component& ibltName) const
     {
-        std::string compressed(ibltName.value_begin(), ibltName.value_end());
+        std::string compressed
+          (ibltName.getValue().buf(),
+           ibltName.getValue().buf() + ibltName.getValue().size());
 
         bio::filtering_streambuf<bio::input> in;
         in.push(bio::zlib_decompressor());

@@ -46,7 +46,7 @@
 using pb_f = std::function<std::string(const std::string&)>;
 
 const static std::unordered_map<std::string, pb_f> probeTable = {
-    {"Pinger"s, echoProbe}
+    {"Pinger", echoProbe}
 };
 
 static int debug{};
@@ -99,10 +99,10 @@ int main(int argc, char* argv[])
     // face so they'll share the same event hander).
 
     auto shims{CRshim::shims("local", "all", CRshim::myPID())};
-    for (auto& s : shims) s.waitForCmd(probeDispatch);
+    for (auto& s : shims) s->waitForCmd(probeDispatch);
 
     try {
-        shims[0].run();
+        shims[0]->run();
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
     }

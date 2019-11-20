@@ -30,6 +30,8 @@
  */
 #include "CRshim.hpp"
 
+using std::to_string;
+
 /* Blackhole utility command-line DNMP Client.
  *    bhClient -p prefix_name -w maximum_wait_time_for_reply -t target
  *       where the -w and -t arguments are not required (have defaults)
@@ -89,14 +91,14 @@ static void bhFinish()
 static void blackholeReply(const Reply& r, CRshim& shim)
 {
     // Using the reply timestamps to print cli-to-nod & nod-to-cli times
-    std::cout << "Reply from NOD " << r["rSrcId"] << " took "
+    std::cout << "Reply from NOD " << r["rSrcId"].toEscapedString() << " took "
               << to_string(r.timeDelta("rTS", "cTS")) << " secs to, "
               << to_string(r.timeDelta("rTS")) << " from." << std::endl;
     nReply++;
     const auto& c = r.getContent();
-    if(!c.empty()) {
+    if(c.size() != 0) {
         std::cout << "\tHas route to: " <<
-            std::string((const char*)(c.value()), c.value_size()) << std::endl;
+            c.toRawStr() << std::endl;
     } else {
         std::cout << "\tDoes not have a route to prefix" << std::endl;
         nBH++;

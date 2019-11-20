@@ -37,6 +37,8 @@
  */
 #include "CRshim.hpp"
 
+using std::to_string;
+
 /* 
  * This is for command-line:
  *   generic-client -p probe_name -a probe_arguments -t target
@@ -92,12 +94,12 @@ static Timer timer;
  */
 void processReply(const Reply& pub, CRshim& shim)
 {
-    if (const auto& c = pub.getContent(); c.value_size() > 0) {
-        std::cout << std::string((const char*)(c.value()), c.value_size()) << "\n";
+    if (const auto& c = pub.getContent(); c.size() > 0) {
+        std::cout << c.toRawStr() << "\n";
     }
 
     // Using the reply timestamps to print client-to-nod & nod-to-client times
-    std::cout << "Reply from " << pub["rSrcId"] << ": timing (in sec.): "
+    std::cout << "Reply from " << pub["rSrcId"].toEscapedString() << ": timing (in sec.): "
               << "to NOD=" + to_string(pub.timeDelta("rTS", "cTS"))
               << "  from NOD=" + to_string(pub.timeDelta("rTS")) << std::endl;
 }
