@@ -302,8 +302,8 @@ class SyncPubsub
                 [](auto& i) { _LOG_INFO("Timeout for " << i->toUri()); },
                 [](auto& i, auto&/*n*/) { _LOG_INFO("Nack for " << i->toUri()); });
         ++m_interestsSent;
-        _LOG_DEBUG("sendSyncInterest " << std::hex
-                      << m_currentInterest.toHex() << "/" << hashIBLT(name));
+        _LOG_DEBUG("sendSyncInterest "
+                      << m_currentInterest.toHex() << "/" << std::hex << hashIBLT(name) << std::dec);
     }
 
     /**
@@ -378,7 +378,7 @@ class SyncPubsub
         std::set<uint32_t> have;
         std::set<uint32_t> need;
         (m_iblt - iblt).listEntries(have, need);
-        _LOG_DEBUG("handleInterest " << std::hex << hashIBLT(name)
+        _LOG_DEBUG("handleInterest " << std::hex << hashIBLT(name) << std::dec
                       << " need " << need.size() << ", have " << have.size());
 
         // If we have things the other side doesn't, send as many as
