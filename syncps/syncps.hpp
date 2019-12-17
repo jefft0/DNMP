@@ -302,8 +302,9 @@ class SyncPubsub
                 [](auto& i) { _LOG_INFO("Timeout for " << i->toUri()); },
                 [](auto& i, auto&/*n*/) { _LOG_INFO("Nack for " << i->toUri()); });
         ++m_interestsSent;
-        _LOG_DEBUG("sendSyncInterest "
-                      << m_currentInterest.toHex() << "/" << std::hex << hashIBLT(name) << std::dec);
+        // For logging, interpret the nonce as a hex integer.
+        _LOG_DEBUG("sendSyncInterest " << std::hex
+                      << *((uint32_t*)m_currentInterest.buf()) << "/" << hashIBLT(name) << std::dec);
     }
 
     /**
@@ -333,8 +334,9 @@ class SyncPubsub
             return;
         }
         const ndn::Name& name = interest.getName();
-        _LOG_DEBUG("onSyncInterest " << interest.getNonce().toHex() << "/"
-                      << hashIBLT(name));
+        // For logging, interpret the nonce as a hex integer.
+        _LOG_DEBUG("onSyncInterest " << std::hex << *((uint32_t*)interest.getNonce().buf()) << "/"
+                      << hashIBLT(name) << std::dec);
 
         if (name.size() - prefixName.size() != 1) {
             _LOG_INFO("invalid sync interest: " << interest.toUri());
