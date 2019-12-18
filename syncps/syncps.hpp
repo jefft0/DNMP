@@ -33,7 +33,6 @@
 #include <ndn-ind/util/logging.hpp>
 #include <ndn-ind/lite/util/crypto-lite.hpp>
 #include <ndn-ind/util/scheduler.hpp>
-#include <ndn-ind/util/time.hpp>
 #include <ndn-ind/encoding/protobuf-tlv.hpp>
 
 #include "syncps/iblt.hpp"
@@ -57,9 +56,8 @@ namespace tlv
 
 constexpr int maxPubSize = 1300;    // max payload in Data (approximate)
 
-using namespace ndn::literals::time_literals;
-constexpr ndn::time::milliseconds maxPubLifetime = 1_s;
-constexpr ndn::time::milliseconds maxClockSkew = 1_s;
+constexpr std::chrono::milliseconds maxPubLifetime = std::chrono::seconds(1);
+constexpr std::chrono::milliseconds maxClockSkew = std::chrono::seconds(1);
 
 /**
  * @brief app callback when new publications arrive
@@ -114,7 +112,7 @@ class SyncPubsub
      */
     SyncPubsub(ndn::ThreadsafeFace& face, Name syncPrefix,
         IsExpiredCb isExpired, FilterPubsCb filterPubs,
-        ndn::time::milliseconds syncInterestLifetime = 4_s,
+        std::chrono::milliseconds syncInterestLifetime = std::chrono::seconds(4),
         size_t expectedNumEntries = 85)  // = 128/1.5 (see detail/iblt.hpp)
         : m_face(face),
           m_syncPrefix(std::move(syncPrefix)),
@@ -194,7 +192,7 @@ class SyncPubsub
      *
      * @param t interest lifetime in ms
      */
-    SyncPubsub& setSyncInterestLifetime(ndn::time::milliseconds t)
+    SyncPubsub& setSyncInterestLifetime(std::chrono::milliseconds t)
     {
         m_syncInterestLifetime = t;
         return *this;
@@ -209,7 +207,7 @@ class SyncPubsub
      * @param after how long to wait (in nanoseconds)
      * @param cb routine to call
      */
-    ScopedEventId schedule(ndn::time::nanoseconds after,
+    ScopedEventId schedule(std::chrono::nanoseconds after,
                            const std::function<void()>& cb)
     {
         return m_scheduler.schedule(after, cb);
@@ -260,7 +258,7 @@ class SyncPubsub
         // to allow for propagation and precessing delays.
         //
         // note: previously scheduled timer is automatically cancelled.
-        auto when = m_syncInterestLifetime - 20_ms;
+        auto when = m_syncInterestLifetime - std::chrono::milliseconds(20);
         m_scheduledSyncInterestId =
             m_scheduler.schedule(when, [this] { sendSyncInterest(); });
     }
@@ -314,7 +312,7 @@ class SyncPubsub
     {
         _LOG_DEBUG("sendSyncInterestSoon");
         m_scheduledSyncInterestId =
-            m_scheduler.schedule(3_ms, [this]{ sendSyncInterest(); });
+            m_scheduler.schedule(std::chrono::milliseconds(3), [this]{ sendSyncInterest(); });
     }
 
     /**
@@ -345,7 +343,7 @@ class SyncPubsub
         if (!  handleInterest(name)) {
             // couldn't handle interest immediately - remember it until
             // we satisfy it or it times out;
-            m_interests[name] = ndn::time::system_clock::now() +
+            m_interests[name] = std::chrono::system_clock::now() +
                                     m_syncInterestLifetime;
         }
     }
@@ -353,7 +351,7 @@ class SyncPubsub
     void handleInterests()
     {
         _LOG_DEBUG("handleInterests");
-        auto now = ndn::time::system_clock::now();
+        auto now = std::chrono::system_clock::now();
         for (auto i = m_interests.begin(); i != m_interests.end(); ) {
             const auto& [name, expires] = *i;
             if (expires <= now || handleInterest(name)) {
@@ -602,8 +600,8 @@ class SyncPubsub
     uint32_t m_expectedNumEntries;
     ndn::ValidatorNull m_validatorNull;
     ndn::Validator& m_validator;
-    ndn::Scheduler m_scheduler;
-    std::map<const Name, ndn::time::system_clock::TimePoint> m_interests{};
+    ndn::scheduler::Scheduler m_scheduler;
+    std::map<const Name, std::chrono::system_clock::time_point> m_interests{};
     IBLT m_iblt;
     ndn::KeyChain m_keyChain;
     SigningInfo m_signingInfo;
@@ -613,7 +611,7 @@ class SyncPubsub
     std::map<const Name, UpdateCb> m_subscription{};
     IsExpiredCb m_isExpired;
     FilterPubsCb m_filterPubs;
-    ndn::time::milliseconds m_syncInterestLifetime;
+    std::chrono::milliseconds m_syncInterestLifetime;
     ndn::scheduler::ScopedEventId m_scheduledSyncInterestId;
     //ndn::ScopedPendingInterestHandle m_interest;
     uint64_t m_registeredPrefix;
@@ -627,10 +625,11 @@ class SyncPubsub
 /**
  * Convert component.toTimestamp() to a TimePoint.
  */
-static inline ndn::time::system_clock::TimePoint
+static inline std::chrono::system_clock::time_point
 toTimestamp(const ndn::Name::Component& component)
 {
-  return ndn::time::getUnixEpoch() + ndn::time::microseconds(component.toTimestamp());
+  return std::chrono::system_clock::time_point
+    (std::chrono::microseconds(component.toTimestamp()));
 }
 
 /**
@@ -640,8 +639,8 @@ static inline Name&
 appendTimestamp(Name& name)
 {
   return name.appendTimestamp
-    (ndn::time::duration_cast<ndn::time::microseconds>
-     (ndn::time::system_clock::now() - ndn::time::getUnixEpoch()).count());
+    (std::chrono::duration_cast<std::chrono::microseconds>
+     (std::chrono::system_clock::now().time_since_epoch()).count());
 }
 
 }  // namespace syncps

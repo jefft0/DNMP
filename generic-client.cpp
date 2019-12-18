@@ -37,6 +37,7 @@
  */
 #include "CRshim.hpp"
 
+using namespace std::chrono;
 using std::to_string;
 
 /* 
@@ -80,8 +81,8 @@ static void help(const char* cname)
 
 static int debug = 0;
 static int count = 1;
-static ndn::time::nanoseconds interval = 1_s;
-static ndn::time::nanoseconds replyWait = 1_s;
+static nanoseconds interval = seconds(1);
+static nanoseconds replyWait = seconds(1);
 static std::string target("local");
 static std::string ptype;
 static std::string pargs;
@@ -154,13 +155,13 @@ int main(int argc, char* argv[])
         case 'i':
             rdbl = std::stod(optarg);
             if (rdbl >= 0.01) {
-                interval = boost::chrono::nanoseconds((int)(rdbl * 1e9));
+                interval = nanoseconds((int)(rdbl * 1e9));
             }
             break;
         case 'w':
             rdbl = std::stod(optarg);
             if (rdbl >= 0.1) {
-                replyWait = boost::chrono::nanoseconds((int)(rdbl * 1e9));
+                replyWait = nanoseconds((int)(rdbl * 1e9));
             }
             break;
         case 'd':

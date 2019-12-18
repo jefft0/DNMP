@@ -87,10 +87,10 @@ struct Reply : public Publication {
      * and the timepoint in component 'idx' this pub's name
      */
     template <typename T>
-    double timeDelta(T t, time::system_clock::time_point tp =
-                                time::system_clock::now()) const
+    double timeDelta(T t, std::chrono::system_clock::time_point tp =
+                          std::chrono::system_clock::now()) const
     {
-        return boost::chrono::duration_cast<boost::chrono::duration<double>>
+        return std::chrono::duration_cast<std::chrono::duration<double>>
                 (tp - toTimestamp(name()[t])).count();
     }
 
@@ -101,7 +101,7 @@ struct Reply : public Publication {
     template <typename T>
     double timeDelta(T l, T f) const
     {
-        return boost::chrono::duration_cast<boost::chrono::duration<double>>
+        return std::chrono::duration_cast<std::chrono::duration<double>>
                 (toTimestamp(name()[l]) - toTimestamp(name()[f])).count();
     }
 };
@@ -222,7 +222,7 @@ class CRshim
         return addHostname("_", "pid" + std::to_string(getpid()));
     }
 
-    Timer schedule(ndn::time::nanoseconds d, const TimerCb& cb) {
+    Timer schedule(std::chrono::nanoseconds d, const TimerCb& cb) {
         return m_sync.schedule(d, cb);
     }
   protected:
@@ -248,7 +248,7 @@ class CRshim
             return pOurs;
         };
     static inline const IsExpiredCb isExpired = [](auto p) {
-        auto dt = ndn::time::system_clock::now() - toTimestamp(p.getName()[-1]);
+        auto dt = std::chrono::system_clock::now() - toTimestamp(p.getName()[-1]);
         return dt >= maxPubLifetime+maxClockSkew || dt <= -maxClockSkew;
     };
     // -- temporary pre-schemaLib place holders --

@@ -30,6 +30,7 @@
  */
 #include "CRshim.hpp"
 
+using namespace std::chrono;
 using std::to_string;
 
 /* Blackhole utility command-line DNMP Client.
@@ -73,7 +74,7 @@ static int debug{0};
 
 static int nReply = 0;     //reply counter
 static int nBH = 0;        //blackhole counter
-static ndn::time::nanoseconds interval = 3_s;
+static nanoseconds interval = seconds(3);
 static std::string target("all");  //default
 static Timer timer;
 
@@ -131,7 +132,7 @@ int main(int argc, char* argv[])
             target = optarg;
             break;
         case 'w':
-            interval = (ndn::time::nanoseconds) atoi(optarg);
+            interval = (nanoseconds) atoi(optarg);
             break;
         case 'd':
             ++debug;
