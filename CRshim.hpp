@@ -91,7 +91,7 @@ struct Reply : public Publication {
                           std::chrono::system_clock::now()) const
     {
         return std::chrono::duration_cast<std::chrono::duration<double>>
-                (tp - toTimestamp(name()[t])).count();
+                (tp - name()[t].toTimestamp()).count();
     }
 
     /*
@@ -102,7 +102,7 @@ struct Reply : public Publication {
     double timeDelta(T l, T f) const
     {
         return std::chrono::duration_cast<std::chrono::duration<double>>
-                (toTimestamp(name()[l]) - toTimestamp(name()[f])).count();
+                (name()[l].toTimestamp() - name()[f].toTimestamp()).count();
     }
 };
 
@@ -147,8 +147,8 @@ class CRshim
     {
         Name cmd(prefix());
         cmd.append(Name::Component(s)).append(Name::Component(a))
-           .append(myPID());
-        appendTimestamp(cmd);
+           .append(myPID())
+           .appendTimestamp(std::chrono::system_clock::now());
         return Publication(cmd);
     }
 
@@ -186,8 +186,7 @@ class CRshim
     void sendReply(Name& n, std::string&& rv)
     {
         // append nod id & timestamp to reply name then publish reply
-        n.append(Name::Component(myPID()));
-        appendTimestamp(n);
+        n.append(Name::Component(myPID())).appendTimestamp(std::chrono::system_clock::now());
         Publication r(n);
         m_sync.publish(std::move(r.setContent((const uint8_t*)(rv.data()), rv.size())));
     }
@@ -235,8 +234,8 @@ class CRshim
                 return pOurs;
             }
             const auto cmp = [](const auto p1, const auto p2) {
-                return toTimestamp(p1->getName()[-1]) >
-                       toTimestamp(p2->getName()[-1]);
+                return p1->getName()[-1].toTimestamp() >
+                       p2->getName()[-1].toTimestamp();
             };
             if (pOurs.size() > 1) {
                 std::sort(pOurs.begin(), pOurs.end(), cmp);
@@ -248,7 +247,7 @@ class CRshim
             return pOurs;
         };
     static inline const IsExpiredCb isExpired = [](auto p) {
-        auto dt = std::chrono::system_clock::now() - toTimestamp(p.getName()[-1]);
+        auto dt = std::chrono::system_clock::now() - p.getName()[-1].toTimestamp();
         return dt >= maxPubLifetime+maxClockSkew || dt <= -maxClockSkew;
     };
     // -- temporary pre-schemaLib place holders --

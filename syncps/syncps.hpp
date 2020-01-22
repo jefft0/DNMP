@@ -430,7 +430,7 @@ class SyncPubsub
         _LOG_DEBUG("sendSyncData: " << name);
         auto data = std::make_shared<ndn::Data>();
         data->setName(name).setContent(pubs);
-        data->getMetaInfo().setFreshnessPeriod((maxPubLifetime / 2).count());
+        data->getMetaInfo().setFreshnessPeriod(maxPubLifetime / 2);
         m_keyChain.sign(*data, m_signingInfo);
         m_face.putData(*data);
     }
