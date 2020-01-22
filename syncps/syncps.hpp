@@ -622,27 +622,6 @@ class SyncPubsub
     bool m_registering{true};
 };
 
-/**
- * Convert component.toTimestamp() to a TimePoint.
- */
-static inline std::chrono::system_clock::time_point
-toTimestamp(const ndn::Name::Component& component)
-{
-  return std::chrono::system_clock::time_point
-    (std::chrono::microseconds(component.toTimestamp()));
-}
-
-/**
- * Append a component for the current time stamp to the name.
- */
-static inline Name&
-appendTimestamp(Name& name)
-{
-  return name.appendTimestamp
-    (std::chrono::duration_cast<std::chrono::microseconds>
-     (std::chrono::system_clock::now().time_since_epoch()).count());
-}
-
 }  // namespace syncps
 
 #endif  // SYNCPS_SYNCPS_HPP
