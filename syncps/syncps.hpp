@@ -291,7 +291,7 @@ class SyncPubsub
         syncInterest.setNonce(m_currentInterest)
             .setCanBePrefix(true)
             .setMustBeFresh(true)
-            .setInterestLifetimeMilliseconds(m_syncInterestLifetime.count());
+            .setInterestLifetime(m_syncInterestLifetime);
         m_face.expressInterest(syncInterest,
                 [this](auto& i, auto& d) {
                     m_validator.validate(*d,
